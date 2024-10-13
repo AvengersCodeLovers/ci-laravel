@@ -4,19 +4,19 @@ default:
 stages:
   - build
   - check
-
+mysql-service: &mysql-service
+  - image: mysql:8.0
+    name: mysql
+    environment:
+      MYSQL_DATABASE: app_db
+      MYSQL_USER: app_user
+      MYSQL_PASSWORD: secret
+      MYSQL_ROOT_PASSWORD: root
 jobs:
   - name: Build Laravel
     stage: build
     image: ghcr.io/avengerscodelovers/php:8.2-ci
-    services:
-      - image: mysql:8.0
-        name: mysql
-        environment:
-          MYSQL_DATABASE: app_db
-          MYSQL_USER: app_user
-          MYSQL_PASSWORD: secret
-          MYSQL_ROOT_PASSWORD: root
+    services: *mysql-service
     environment:
       APP_ENV: testing
       COMPOSER_MEMORY_LIMIT: 2G
@@ -68,19 +68,12 @@ jobs:
   - name: PHP Test Coverage and Codecov
     stage: check
     image: ghcr.io/avengerscodelovers/php:8.2-ci
-    services:
-      - image: mysql:8.0
-        name: mysql
-        environment:
-          MYSQL_DATABASE: app_db
-          MYSQL_USER: app_user
-          MYSQL_PASSWORD: secret
-          MYSQL_ROOT_PASSWORD: root
+    services: *mysql-service
     environment:
       COMPOSER_ALLOW_SUPERUSER: "1"
     script:
       - php artisan migrate
-      - XDEBUG_MODE=coverage php -dzend_extension=xdebug.so ./vendor/bin/pest --coverage-clover ./coverage.xml --ci
+      - XDEBUG_MODE=coverage php -dzend_extension=xdebug.so ./vendor/bin/pest --parallel --processes=10 --coverage-clover ./coverage.xml --runner=WrapperRunner --processes=10 --ci
       # Upload code coverage report to Sun* Codecov
       # Container must be installed git, that used to detect Git commit SHA for Codecov
       - apk add curl git
