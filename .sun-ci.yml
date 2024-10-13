@@ -1,0 +1,83 @@
+default:
+  workspace: shared
+
+stages:
+  - build
+  - check
+mysql-service: &mysql-service
+  - image: mysql:8.0
+    name: mysql
+    environment:
+      MYSQL_DATABASE: app_db
+      MYSQL_USER: app_user
+      MYSQL_PASSWORD: secret
+      MYSQL_ROOT_PASSWORD: root
+jobs:
+  - name: Build Laravel
+    stage: build
+    image: ghcr.io/avengerscodelovers/php:8.2-ci
+    services: *mysql-service
+    environment:
+      APP_ENV: testing
+      COMPOSER_MEMORY_LIMIT: 2G
+      COMPOSER_ALLOW_SUPERUSER: "1"
+    cache:
+      - key: composer_vendor_$CI_BRANCH
+        paths:
+          - vendor
+    script:
+      - cp .env.testing.example .env
+      - composer install
+      - php artisan key:generate
+      - php artisan migrate
+      - php artisan route:cache
+
+  # - name: Check GKC Hashcode
+  #   stage: check
+  #   image: bash:latest
+  #   workspace: false
+  #   before_script:
+  #     # For command tput, used by gkc_util_hashcode_script.sh
+  #     - apk add ncurses
+  #   environment:
+  #     TERM: xterm
+  #   script:
+  #     - bash ./gkc_util_hashcode_script.sh
+  #   only:
+  #     events:
+  #       - pull_request
+
+  - name: Static Code Analysis
+    stage: check
+    image: ghcr.io/avengerscodelovers/php:8.2-ci
+    environment:
+      COMPOSER_MEMORY_LIMIT: 2G
+      COMPOSER_ALLOW_SUPERUSER: "1"
+    script:
+      - COMPOSER_PROCESS_TIMEOUT=600 composer phpstan
+
+  - name: PHP Coding Convention
+    stage: check
+    image: ghcr.io/avengerscodelovers/php:8.2-ci
+    environment:
+      COMPOSER_MEMORY_LIMIT: 2G
+      COMPOSER_ALLOW_SUPERUSER: "1"
+    script:
+      - composer cs
+
+  - name: PHP Test Coverage and Codecov
+    stage: check
+    image: ghcr.io/avengerscodelovers/php:8.2-ci
+    services: *mysql-service
+    environment:
+      COMPOSER_ALLOW_SUPERUSER: "1"
+    script:
+      - php artisan migrate
+      - XDEBUG_MODE=coverage php -dzend_extension=xdebug.so ./vendor/bin/pest --parallel --processes=10 --coverage-clover ./coverage.xml --runner=WrapperRunner --processes=10 --ci
+      # Upload code coverage report to Sun* Codecov
+      # Container must be installed git, that used to detect Git commit SHA for Codecov
+      - apk add curl git
+      - curl -Os https://cli.codecov.io/latest/alpine/codecov
+      - chmod +x codecov
+      - if [ -z $CI_PR_NUMBER ]; then export CODECOV_PR=""; else export CODECOV_PR="--pull-request-number $CI_PR_NUMBER"; fi
+      - ./codecov --verbose --enterprise-url https://athena.sun-asterisk.vn upload-process --fail-on-error --token $CODECOV_TOKEN --branch $CI_BRANCH $CODECOV_PR --name 'Sun*CI' --flag phpunit --file ./coverage.xml --build-url https://ci.sun-asterisk.com/$CI_GIT_PROVIDER/$CI_REPOSITORY/builds/$CI_BUILD_NUMBER --plugin noop --report-type coverage
